@@ -128,6 +128,12 @@ tr:hover td{background:rgba(255,255,255,0.02);}
 .nav-pills{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px;}
 .nav-pill{padding:8px 18px;border-radius:20px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid rgba(99,179,237,0.2);background:#111827;color:#a0aec0;font-family:'Cairo',sans-serif;transition:all 0.2s;text-decoration:none;}
 .nav-pill.active,.nav-pill:hover{background:#f6c90e;color:#000;border-color:#f6c90e;}
+
+.currency-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px;}
+.currency-option{background:#151d35;border:1px solid rgba(99,179,237,0.15);border-radius:10px;padding:8px;font-size:12px;display:flex;gap:6px;align-items:center;justify-content:center;cursor:pointer;}
+.currency-option input{width:auto!important;}
+.password-strength{height:8px;background:#1a2340;border-radius:20px;overflow:hidden;margin-top:8px;}
+.password-strength span{display:block;height:100%;width:0%;background:#fc8181;transition:all .2s;}
 </style>
 </head>
 <body>
@@ -170,10 +176,36 @@ tr:hover td{background:rgba(255,255,255,0.02);}
           <input id="regName" type="text" placeholder="محمد أحمد">
         </div>
         <div class="form-group"><label>رقم الجوال</label>
-          <input id="regPhone" type="tel" placeholder="05xxxxxxxx">
+          <input id="regPhone" type="tel" placeholder="05xxxxxxxx أو رقم دولي">
+        </div>
+        <div class="form-group"><label>البريد الإلكتروني</label>
+          <input id="regEmail" type="email" placeholder="example@email.com">
+        </div>
+        <div class="form-group"><label>الدولة</label>
+          <select id="regCountry" onchange="countryChanged()">
+            <option value="SA">السعودية</option>
+            <option value="YE">اليمن</option>
+            <option value="AE">الإمارات</option>
+            <option value="EG">مصر</option>
+            <option value="KW">الكويت</option>
+            <option value="QA">قطر</option>
+            <option value="BH">البحرين</option>
+            <option value="OM">عمان</option>
+            <option value="US">أمريكا</option>
+            <option value="EU">أوروبا</option>
+            <option value="GB">بريطانيا</option>
+          </select>
+        </div>
+        <div class="form-group"><label>العملة الأساسية</label>
+          <select id="regDefaultCurrency"></select>
+        </div>
+        <div class="form-group"><label>عملات إضافية</label>
+          <div id="regCurrencies" class="currency-grid"></div>
         </div>
         <div class="form-group"><label>كلمة المرور</label>
-          <input id="regPass" type="password" placeholder="••••••••">
+          <input id="regPass" type="password" placeholder="Aa@12345" oninput="updatePasswordStrength()">
+          <div class="password-strength"><span id="pwdStrengthBar"></span></div>
+          <div id="pwdStrengthText" style="font-size:11px;color:#a0aec0;margin-top:6px;">لازم كبير وصغير ورقم ورمز و8 أحرف</div>
         </div>
         <button class="btn btn-gold" style="width:100%;justify-content:center;margin-top:8px" onclick="doRegister()">
           ✨ إنشاء الحساب
@@ -208,6 +240,7 @@ tr:hover td{background:rgba(255,255,255,0.02);}
       <a class="nav-pill" onclick="showPage('reports')" id="pill-reports">📊 التقارير</a>
       <a class="nav-pill" onclick="showPage('map')" id="pill-map">🗺️ الخريطة</a>
       <a class="nav-pill" onclick="showPage('settings')" id="pill-settings">⚙️ الإعدادات</a>
+      <a class="nav-pill" href="/plans" id="pill-plans">💎 الباقات</a>
     </div>
     <!-- Search Bar -->
     <div style="display:flex;gap:10px;margin-bottom:12px;">
@@ -653,6 +686,59 @@ let currentContactId = null;
 let contactTypeFilter = 'all';
 let txFilter = 'all';
 let stTab = 'total';
+let appSettingsUser = null;
+const COUNTRY_CURRENCY = {
+  SA:{name:'السعودية', currency:'SAR', symbol:'ر.س'}, YE:{name:'اليمن', currency:'YER', symbol:'ر.ي'},
+  AE:{name:'الإمارات', currency:'AED', symbol:'د.إ'}, EG:{name:'مصر', currency:'EGP', symbol:'ج.م'},
+  KW:{name:'الكويت', currency:'KWD', symbol:'د.ك'}, QA:{name:'قطر', currency:'QAR', symbol:'ر.ق'},
+  BH:{name:'البحرين', currency:'BHD', symbol:'د.ب'}, OM:{name:'عمان', currency:'OMR', symbol:'ر.ع'},
+  US:{name:'أمريكا', currency:'USD', symbol:'$'}, EU:{name:'أوروبا', currency:'EUR', symbol:'€'}, GB:{name:'بريطانيا', currency:'GBP', symbol:'£'}
+};
+const ALL_CURRENCIES = ['SAR','YER','AED','EGP','USD','EUR','GBP','KWD','QAR','BHD','OMR'];
+const CURRENCY_LABEL = {SAR:'SAR ر.س',YER:'YER ر.ي',AED:'AED د.إ',EGP:'EGP ج.م',USD:'USD $',EUR:'EUR €',GBP:'GBP £',KWD:'KWD د.ك',QAR:'QAR ر.ق',BHD:'BHD د.ب',OMR:'OMR ر.ع'};
+function countryChanged(){
+  const c = $('regCountry')?.value || 'SA';
+  const cur = COUNTRY_CURRENCY[c]?.currency || 'SAR';
+  if ($('regDefaultCurrency')) $('regDefaultCurrency').value = cur;
+  document.querySelectorAll('#regCurrencies input[type=checkbox]').forEach(x => { if (x.value===cur) x.checked=true; });
+}
+function initCurrencyControls(){
+  const sel=$('regDefaultCurrency');
+  if(sel && !sel.dataset.ready){
+    sel.innerHTML=ALL_CURRENCIES.map(c=>`<option value="${c}">${CURRENCY_LABEL[c]||c}</option>`).join('');
+    sel.dataset.ready='1';
+  }
+  const box=$('regCurrencies');
+  if(box && !box.dataset.ready){
+    box.innerHTML=ALL_CURRENCIES.map(c=>`<label class="currency-option"><input type="checkbox" value="${c}"> ${CURRENCY_LABEL[c]||c}</label>`).join('');
+    box.dataset.ready='1';
+  }
+  countryChanged();
+}
+function selectedRegisterCurrencies(){
+  const checked=[...document.querySelectorAll('#regCurrencies input:checked')].map(x=>x.value);
+  const def=$('regDefaultCurrency')?.value || 'SAR';
+  return [...new Set([def, ...checked])];
+}
+function passwordScore(p){
+  let s=0; if(p.length>=8)s++; if(/[a-z]/.test(p))s++; if(/[A-Z]/.test(p))s++; if(/\d/.test(p))s++; if(/[^A-Za-z0-9]/.test(p))s++; return s;
+}
+function updatePasswordStrength(){
+  const p=$('regPass')?.value||''; const sc=passwordScore(p); const bar=$('pwdStrengthBar'); const txt=$('pwdStrengthText');
+  if(!bar||!txt)return; bar.style.width=(sc*20)+'%';
+  if(sc<=2){bar.style.background='#fc8181';txt.textContent='ضعيفة';}
+  else if(sc<=4){bar.style.background='#f6ad55';txt.textContent='متوسطة';}
+  else {bar.style.background='#48bb78';txt.textContent='قوية';}
+}
+function getUserCurrencies(){
+  const raw = appSettingsUser?.currencies || appSettingsUser?.default_currency || 'SAR';
+  return [...new Set(String(raw).split(',').map(x=>x.trim()).filter(Boolean))];
+}
+function populateCurrencySelects(){
+  const currs=getUserCurrencies();
+  const html=currs.map(c=>`<option value="${c}">${CURRENCY_LABEL[c]||c}</option>`).join('');
+  const tx=$('txCurrency'); if(tx){ const old=tx.value; tx.innerHTML=html; tx.value=currs.includes(old)?old:(appSettingsUser?.default_currency||currs[0]||'SAR'); }
+}
 
 // ===== مساعدات =====
 const $ = id => document.getElementById(id);
@@ -666,13 +752,14 @@ const toast = (msg, type='success') => {
 const api = async (url, data=null) => {
   const opts = {
     method: data ? 'POST' : 'GET',
-    headers: {'Content-Type':'application/json'},
-    credentials: 'same-origin'
+    headers: {'Content-Type':'application/json'}
   };
   if (data) opts.body = JSON.stringify(data);
   const res = await fetch(url, opts);
   return res.json();
 };
+
+window.addEventListener('DOMContentLoaded', initCurrencyControls);
 
 // ===== AUTH =====
 function switchAuthTab(tab) {
@@ -680,6 +767,7 @@ function switchAuthTab(tab) {
   event.target.classList.add('active');
   $('loginForm').style.display = tab === 'login' ? 'block' : 'none';
   $('registerForm').style.display = tab === 'register' ? 'block' : 'none';
+  if (tab === 'register') setTimeout(initCurrencyControls, 50);
 }
 
 async function doLogin() {
@@ -692,32 +780,24 @@ async function doLogin() {
 }
 
 async function doRegister() {
+  initCurrencyControls();
   const name  = $('regName').value.trim();
   const phone = $('regPhone').value.trim();
+  const email = $('regEmail').value.trim();
   const pass  = $('regPass').value;
-  if (!name || !phone || !pass) { showAlert('alertAuth','يرجى تعبئة الحقول','error'); return; }
-  const r = await api('/api/register', {name, phone, password: pass});
-  if (r.success) { startApp(r.user); }
+  const country = $('regCountry').value;
+  const default_currency = $('regDefaultCurrency').value;
+  const currencies = selectedRegisterCurrencies();
+  if (!name || !phone || !email || !pass || !country || !default_currency) { showAlert('alertAuth','يرجى تعبئة الاسم والجوال والبريد والدولة والعملة وكلمة المرور','error'); return; }
+  if (passwordScore(pass) < 5) { showAlert('alertAuth','كلمة المرور لازم قوية: كبير وصغير ورقم ورمز و8 أحرف','error'); return; }
+  const r = await api('/api/register', {name, phone, email, country, default_currency, currencies, password: pass});
+  if (r.success) { showAlert('alertAuth', r.message || 'تم إرسال رمز التحقق', 'success'); if (r.user) startApp(r.user); }
   else { showAlert('alertAuth', r.error || 'خطأ في التسجيل', 'error'); }
 }
 
 async function doLogout() {
-  try {
-    await fetch('/api/logout', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      credentials: 'same-origin'
-    });
-  } catch (e) {}
-
-  localStorage.clear();
-  sessionStorage.clear();
-
-  $('mainApp').style.display = 'none';
-  $('loginPage').style.display = 'block';
-  $('loginPhone').value = '';
-  $('loginPass').value = '';
-  history.replaceState(null, '', '/');
+  await api('/api/logout');
+  location.reload();
 }
 
 function showAlert(id, msg, type) {
@@ -728,22 +808,27 @@ function showAlert(id, msg, type) {
 
 // ===== APP START =====
 async function startApp(user) {
+  appSettingsUser = user || appSettingsUser;
   $('loginPage').style.display = 'none';
   $('mainApp').style.display = 'block';
   $('welcomeName').textContent = user?.name || 'مستخدم';
   $('todayDate').textContent = new Date().toLocaleDateString('ar-SA', {weekday:'long',year:'numeric',month:'long',day:'numeric'});
   await loadAll();
+  populateCurrencySelects();
   showPage('home');
 }
 
 async function loadAll() {
-  const [contacts, txs] = await Promise.all([
+  const [me, contacts, txs] = await Promise.all([
+    api('/api/me'),
     api('/api/contacts'),
     api('/api/transactions')
   ]);
+  if (me.user) appSettingsUser = me.user;
   allContacts = contacts.data || [];
   allTx       = txs.data || [];
   populateContactSelects();
+  populateCurrencySelects();
 }
 
 // ===== NAVIGATION =====
@@ -1313,18 +1398,17 @@ function generateOTP() {
   return Math.floor(1000 + Math.random() * 9000).toString();
 }
 
-function showOTP(action, desc, code=null) {
-  pendingOTPCode = code;
+function showOTP(action, desc) {
+  pendingOTPCode = generateOTP();
   pendingOTPAction = action;
-  $('otpDesc').textContent = desc || (code ? `رمز التحقق: ${code} (تجريبي)` : 'تم إرسال رمز التحقق');
+  $('otpDesc').textContent = desc || `رمز التحقق: ${pendingOTPCode} (تجريبي)`;
   ['otp0','otp1','otp2','otp3'].forEach(id => { const el=$(id); if(el) el.value=''; });
   $('alertOTP').className='alert';
   openModal('modalOTP');
   setTimeout(() => { const el=$('otp0'); if(el) el.focus(); }, 200);
-  if (code) {
-    console.log(`OTP Code: ${code}`);
-    toast(`رمز التحقق: ${code}`, 'success');
-  }
+  // In real app: send SMS via Unifonic/Taqnyat
+  console.log(`OTP Code: ${pendingOTPCode}`);
+  toast(`رمز التحقق: ${pendingOTPCode}`, 'success');
 }
 
 function otpNext(i) {
@@ -1340,41 +1424,38 @@ function verifyOTP() {
     const el = $(id); return el ? el.value : '';
   }).join('');
 
-  if (pendingOTPCode && entered !== pendingOTPCode) {
+  if (entered === pendingOTPCode) {
+    closeModal('modalOTP');
+    toast('تم التحقق بنجاح ✅', 'success');
+    if (pendingOTPAction) pendingOTPAction();
+  } else {
     showAlert('alertOTP', 'رمز التحقق غير صحيح', 'error');
-    return;
   }
-
-  closeModal('modalOTP');
-  if (pendingOTPAction) pendingOTPAction(entered);
 }
 
 // Hook into register to show OTP
 const _origDoRegister = doRegister;
 async function doRegister() {
+  initCurrencyControls();
   const name  = $('regName').value.trim();
   const phone = $('regPhone').value.trim();
+  const email = $('regEmail').value.trim();
   const pass  = $('regPass').value;
-  if (!name || !phone || !pass) { showAlert('alertAuth','يرجى تعبئة الحقول','error'); return; }
-  if (pass.length < 6) { showAlert('alertAuth','كلمة المرور قصيرة (6 أحرف على الأقل)','error'); return; }
+  const country = $('regCountry').value;
+  const default_currency = $('regDefaultCurrency').value;
+  const currencies = selectedRegisterCurrencies();
+  if (!name || !phone || !email || !pass || !country || !default_currency) { showAlert('alertAuth','يرجى تعبئة الاسم والجوال والبريد والدولة والعملة وكلمة المرور','error'); return; }
+  if (passwordScore(pass) < 5) { showAlert('alertAuth','كلمة المرور لازم قوية: كبير وصغير ورقم ورمز و8 أحرف','error'); return; }
 
-  const r = await api('/api/register', {name, phone, password: pass});
-  if (!r.success) {
-    showAlert('alertAuth', r.error || 'خطأ في التسجيل', 'error');
-    return;
-  }
-
-  showOTP(async (otp) => {
-    const v = await api('/api/verify-otp', {phone, otp});
-    if (v.success) {
-      toast('تم إنشاء الحساب ✅', 'success');
-      startApp(v.user);
-    } else {
-      showAlert('alertAuth', v.error || 'رمز التحقق غير صحيح', 'error');
-      $('loginPage').style.display = 'block';
-      $('mainApp').style.display = 'none';
-    }
-  }, r.otp_demo ? `رمز التحقق التجريبي: ${r.otp_demo}` : 'أدخل رمز التحقق المرسل للجوال', r.otp_demo || null);
+  const r = await api('/api/register', {name, phone, email, country, default_currency, currencies, password: pass});
+  if (r.success) {
+    showOTP(async () => {
+      const otp = [...Array(4)].map((_,i)=>$('otp'+i).value).join('');
+      const vr = await api('/api/verify-otp', {phone, otp});
+      if (vr.success) { closeModal('modalOTP'); startApp(vr.user); }
+      else showAlert('alertOTP', vr.error || 'رمز التحقق غير صحيح', 'error');
+    }, `رمز تأكيد التسجيل للجوال والبريد (تجريبي: ${r.otp_demo||''})`);
+  } else { showAlert('alertAuth', r.error || 'خطأ في التسجيل', 'error'); }
 }
 
 // ===== SETTINGS =====
@@ -1389,7 +1470,7 @@ async function renderSettings() {
   const ph = $('settingsPhone');
   if (av) av.textContent = (currentUser.name||'م').charAt(0);
   if (nm) nm.textContent = currentUser.name || '—';
-  if (ph) ph.textContent = currentUser.phone || '—';
+  if (ph) ph.textContent = `${currentUser.phone || '—'} · ${currentUser.country || 'SA'} · ${(currentUser.currencies || currentUser.default_currency || 'SAR')}`;
 
   // Load saved terms
   const s = await api('/api/settings');
@@ -1559,13 +1640,16 @@ function filterMap(el, type) {
 // Hook loadAll to refresh map if open
 const _origLoadAll = loadAll;
 async function loadAll() {
-  const [contacts, txs] = await Promise.all([
+  const [me, contacts, txs] = await Promise.all([
+    api('/api/me'),
     api('/api/contacts'),
     api('/api/transactions')
   ]);
+  if (me.user) appSettingsUser = me.user;
   allContacts = contacts.data || [];
   allTx       = txs.data || [];
   populateContactSelects();
+  populateCurrencySelects();
   if (mapInstance) renderMapMarkers();
 }
 
@@ -1578,6 +1662,7 @@ async function startApp(user) {
   $('welcomeName').textContent = user?.name || 'مستخدم';
   $('todayDate').textContent = new Date().toLocaleDateString('ar-SA', {weekday:'long',year:'numeric',month:'long',day:'numeric'});
   await loadAll();
+  populateCurrencySelects();
   showPage('home');
 }
 </script>

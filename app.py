@@ -47,6 +47,29 @@ MOYASAR_API_KEY    = os.environ.get('MOYASAR_API_KEY', '')
 MOYASAR_SECRET_KEY = os.environ.get('MOYASAR_SECRET_KEY', '')
 APP_URL            = os.environ.get('APP_URL', 'http://localhost:5000')
 
+
+COUNTRY_CURRENCY = {
+    'SA': {'name':'السعودية', 'currency':'SAR', 'symbol':'ر.س'},
+    'YE': {'name':'اليمن', 'currency':'YER', 'symbol':'ر.ي'},
+    'AE': {'name':'الإمارات', 'currency':'AED', 'symbol':'د.إ'},
+    'EG': {'name':'مصر', 'currency':'EGP', 'symbol':'ج.م'},
+    'KW': {'name':'الكويت', 'currency':'KWD', 'symbol':'د.ك'},
+    'QA': {'name':'قطر', 'currency':'QAR', 'symbol':'ر.ق'},
+    'BH': {'name':'البحرين', 'currency':'BHD', 'symbol':'د.ب'},
+    'OM': {'name':'عمان', 'currency':'OMR', 'symbol':'ر.ع'},
+    'US': {'name':'أمريكا', 'currency':'USD', 'symbol':'$'},
+    'EU': {'name':'أوروبا', 'currency':'EUR', 'symbol':'€'},
+    'GB': {'name':'بريطانيا', 'currency':'GBP', 'symbol':'£'},
+}
+
+def currency_symbol(code):
+    code = (code or 'SAR').upper()
+    for v in COUNTRY_CURRENCY.values():
+        if v['currency'] == code:
+            return v['symbol']
+    return code
+
+
 # ============================================================
 # قاعدة البيانات — يدعم SQLite وPostgreSQL
 # ============================================================
@@ -153,6 +176,9 @@ def init_db():
                 phone         TEXT    UNIQUE NOT NULL,
                 email         TEXT    DEFAULT '',
                 business      TEXT    DEFAULT '',
+                country       TEXT    DEFAULT 'SA',
+                default_currency TEXT DEFAULT 'SAR',
+                currencies    TEXT    DEFAULT 'SAR',
                 password      TEXT    NOT NULL,
                 plan          TEXT    DEFAULT 'free',
                 plan_expires  TEXT    DEFAULT '',
@@ -219,6 +245,17 @@ def init_db():
                 cur.execute(t)
             except Exception as e:
                 print(f"Table warning: {e}")
+        # ترقية الجداول القديمة بدون حذف البيانات
+        for col, ddl in {
+            'country': "ALTER TABLE users ADD COLUMN country TEXT DEFAULT 'SA'",
+            'default_currency': "ALTER TABLE users ADD COLUMN default_currency TEXT DEFAULT 'SAR'",
+            'currencies': "ALTER TABLE users ADD COLUMN currencies TEXT DEFAULT 'SAR'",
+        }.items():
+            try:
+                cur.execute(ddl)
+            except Exception as e:
+                if 'already exists' not in str(e).lower() and 'duplicate column' not in str(e).lower():
+                    print(f"Column warning {col}: {e}")
         db.commit()
     else:
         db = sqlite3.connect('hesabi.db')
@@ -226,7 +263,9 @@ def init_db():
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
                 phone TEXT UNIQUE NOT NULL, email TEXT DEFAULT '',
-                business TEXT DEFAULT '', password TEXT NOT NULL,
+                business TEXT DEFAULT '', country TEXT DEFAULT 'SA',
+                default_currency TEXT DEFAULT 'SAR', currencies TEXT DEFAULT 'SAR',
+                password TEXT NOT NULL,
                 plan TEXT DEFAULT 'free', plan_expires TEXT DEFAULT '',
                 is_active INTEGER DEFAULT 1, otp_code TEXT DEFAULT '',
                 otp_expires TEXT DEFAULT '', created TEXT DEFAULT (datetime('now')),
@@ -262,6 +301,16 @@ def init_db():
                 created TEXT DEFAULT (datetime('now'))
             );
         """)
+        # ترقية الجداول القديمة بدون حذف البيانات
+        for ddl in [
+            "ALTER TABLE users ADD COLUMN country TEXT DEFAULT 'SA'",
+            "ALTER TABLE users ADD COLUMN default_currency TEXT DEFAULT 'SAR'",
+            "ALTER TABLE users ADD COLUMN currencies TEXT DEFAULT 'SAR'",
+        ]:
+            try:
+                db.execute(ddl)
+            except Exception:
+                pass
         db.commit()
         db.close()
     print("✅ قاعدة البيانات جاهزة")
@@ -384,18 +433,33 @@ def index(): return load_html()
 
 @app.route('/api/register', methods=['POST'])
 def register():
-    d = request.get_json()
+    d = request.get_json() or {}
     name=d.get('name','').strip(); phone=d.get('phone','').strip(); pwd=d.get('password','')
-    if not all([name,phone,pwd]): return jsonify({'error':'يرجى تعبئة جميع الحقول'})
-    if len(pwd)<6: return jsonify({'error':'كلمة المرور قصيرة (6 أحرف على الأقل)'})
-    if not re.match(r'^05\d{8}$',phone): return jsonify({'error':'رقم الجوال غير صحيح'})
-    if q("SELECT id FROM users WHERE phone=?",(phone,),one=True):
-        return jsonify({'error':'رقم الجوال مسجّل مسبقاً'})
+    email=d.get('email','').strip().lower(); country=d.get('country','SA').strip().upper() or 'SA'
+    default_currency=d.get('default_currency','').strip().upper()
+    currencies=d.get('currencies',[])
+    if not default_currency:
+        default_currency = COUNTRY_CURRENCY.get(country, COUNTRY_CURRENCY['SA'])['currency']
+    if isinstance(currencies, str):
+        currencies = [x.strip().upper() for x in currencies.split(',') if x.strip()]
+    currencies = list(dict.fromkeys([default_currency] + [c.upper() for c in currencies if c]))
+    if not all([name,phone,email,pwd,country,default_currency]):
+        return jsonify({'error':'يرجى تعبئة الاسم والجوال والبريد والدولة والعملة وكلمة المرور'})
+    if not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email):
+        return jsonify({'error':'البريد الإلكتروني غير صحيح'})
+    if not re.match(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$', pwd):
+        return jsonify({'error':'كلمة المرور لازم 8 أحرف وفيها كبير وصغير ورقم ورمز'})
+    if not (re.match(r'^05\d{8}$',phone) or re.match(r'^\+?\d{8,15}$',phone)):
+        return jsonify({'error':'رقم الجوال غير صحيح'})
+    if q("SELECT id FROM users WHERE phone=? OR email=?",(phone,email),one=True):
+        return jsonify({'error':'رقم الجوال أو البريد مسجّل مسبقاً'})
     otp=gen_otp(); expires=(datetime.now()+timedelta(minutes=5)).strftime('%Y-%m-%d %H:%M:%S')
-    q("INSERT INTO users (name,phone,password,otp_code,otp_expires) VALUES (?,?,?,?,?)",
-      (name,phone,hash_pwd(pwd),otp,expires),commit=True)
+    q("""INSERT INTO users (name,phone,email,country,default_currency,currencies,password,otp_code,otp_expires)
+         VALUES (?,?,?,?,?,?,?,?,?)""",
+      (name,phone,email,country,default_currency,','.join(currencies),hash_pwd(pwd),otp,expires),commit=True)
     send_sms(phone,f'حسابي: رمز التحقق {otp}. صالح 5 دقائق.')
-    return jsonify({'success':True,'otp_demo':otp,'message':'تم إرسال رمز التحقق'})
+    print(f"📧 [Email Demo] To: {email} | OTP: {otp}")
+    return jsonify({'success':True,'otp_demo':otp,'message':'تم إرسال رمز التحقق للجوال والبريد'})
 
 @app.route('/api/verify-otp', methods=['POST'])
 def verify_otp():
@@ -422,13 +486,15 @@ def login():
     session['user_id']=user['id']; session['user_name']=user['name']
     return jsonify({'success':True,'user':{'id':user['id'],'name':user['name'],'plan':user['plan']}})
 
-@app.route('/api/logout', methods=['POST'])
-def logout(): session.clear(); return jsonify({'success':True})
+@app.route('/api/logout', methods=['GET', 'POST'])
+def logout():
+    session.clear()
+    return jsonify({'success': True, 'redirect': '/'})
 
 @app.route('/api/me')
 def me():
     if 'user_id' not in session: return jsonify({'user':None})
-    user=q("SELECT id,name,phone,email,business,plan FROM users WHERE id=?",(session['user_id'],),one=True)
+    user=q("SELECT id,name,phone,email,business,country,default_currency,currencies,plan FROM users WHERE id=?",(session['user_id'],),one=True)
     return jsonify({'user':user})
 
 @app.route('/api/resend-otp', methods=['POST'])
@@ -447,8 +513,12 @@ def profile():
     d=request.get_json(); uid=session['user_id']
     name=d.get('name','').strip()
     if not name: return jsonify({'error':'الاسم مطلوب'})
-    q("UPDATE users SET name=?,email=?,business=? WHERE id=?",
-      (name,d.get('email',''),d.get('business',''),uid),commit=True)
+    country=d.get('country','SA').strip().upper() or 'SA'
+    default_currency=d.get('default_currency','SAR').strip().upper() or 'SAR'
+    currencies=d.get('currencies', default_currency)
+    if isinstance(currencies, list): currencies=','.join(currencies)
+    q("UPDATE users SET name=?,email=?,business=?,country=?,default_currency=?,currencies=? WHERE id=?",
+      (name,d.get('email',''),d.get('business',''),country,default_currency,currencies,uid),commit=True)
     session['user_name']=name
     return jsonify({'success':True})
 
@@ -578,6 +648,10 @@ def search():
         WHERE t.user_id=? AND (c.name LIKE ? OR t.notes LIKE ?)
         ORDER BY t.created DESC LIMIT 6""",(uid,f'%{sq}%',f'%{sq}%'),many=True)
     return jsonify({'contacts':cs,'transactions':ts})
+
+@app.route('/api/currency-options')
+def currency_options():
+    return jsonify({'countries': COUNTRY_CURRENCY})
 
 @app.route('/api/plans')
 def plans(): return jsonify({'plans':PLANS})
