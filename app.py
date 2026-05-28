@@ -224,7 +224,10 @@ def init_db():
                 otp_code      TEXT    DEFAULT '',
                 otp_expires   TEXT    DEFAULT '',
                 created       TEXT    DEFAULT NOW()::TEXT,
-                last_login    TEXT    DEFAULT ''
+                last_login    TEXT    DEFAULT '',
+                reset_token   TEXT    DEFAULT '',
+                reset_expires TEXT    DEFAULT '',
+                security_score INTEGER DEFAULT 0
             )""",
             """CREATE TABLE IF NOT EXISTS contacts (
                 id            SERIAL PRIMARY KEY,
@@ -288,6 +291,9 @@ def init_db():
             'country': "ALTER TABLE users ADD COLUMN country TEXT DEFAULT 'SA'",
             'default_currency': "ALTER TABLE users ADD COLUMN default_currency TEXT DEFAULT 'SAR'",
             'currencies': "ALTER TABLE users ADD COLUMN currencies TEXT DEFAULT 'SAR'",
+            'reset_token': "ALTER TABLE users ADD COLUMN reset_token TEXT DEFAULT ''",
+            'reset_expires': "ALTER TABLE users ADD COLUMN reset_expires TEXT DEFAULT ''",
+            'security_score': "ALTER TABLE users ADD COLUMN security_score INTEGER DEFAULT 0",
         }.items():
             try:
                 cur.execute(ddl)
@@ -307,7 +313,8 @@ def init_db():
                 plan TEXT DEFAULT 'free', plan_expires TEXT DEFAULT '',
                 is_active INTEGER DEFAULT 1, otp_code TEXT DEFAULT '',
                 otp_expires TEXT DEFAULT '', created TEXT DEFAULT (datetime('now')),
-                last_login TEXT DEFAULT ''
+                last_login TEXT DEFAULT '',
+                reset_token TEXT DEFAULT '', reset_expires TEXT DEFAULT '', security_score INTEGER DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS contacts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
@@ -344,6 +351,9 @@ def init_db():
             "ALTER TABLE users ADD COLUMN country TEXT DEFAULT 'SA'",
             "ALTER TABLE users ADD COLUMN default_currency TEXT DEFAULT 'SAR'",
             "ALTER TABLE users ADD COLUMN currencies TEXT DEFAULT 'SAR'",
+            "ALTER TABLE users ADD COLUMN reset_token TEXT DEFAULT ''",
+            "ALTER TABLE users ADD COLUMN reset_expires TEXT DEFAULT ''",
+            "ALTER TABLE users ADD COLUMN security_score INTEGER DEFAULT 0",
         ]:
             try:
                 db.execute(ddl)
@@ -448,6 +458,68 @@ def send_sms(phone, message):
         except: return False
     return False
 
+
+def send_email(to, subject, message):
+    print(f"📧 [Email Demo] To: {to} | Subject: {subject} | Msg: {message}")
+    return True
+
+def password_score(pwd):
+    score = 0
+    if len(pwd or '') >= 8: score += 25
+    if re.search(r'[A-Z]', pwd or ''): score += 20
+    if re.search(r'[a-z]', pwd or ''): score += 20
+    if re.search(r'\d', pwd or ''): score += 20
+    if re.search(r'[^A-Za-z0-9]', pwd or ''): score += 15
+    return min(score, 100)
+
+def strong_password(pwd):
+    return bool(re.match(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$', pwd or ''))
+
+def financial_tip():
+    tips = [
+        'راجع مستحقاتك اليوم وخفّض المتأخرات خطوة بخطوة.',
+        'كل عملية تسجلها اليوم توفر عليك وقت وجهد آخر الشهر.',
+        'تابع تاريخ الاستحقاق قبل موعده لتقليل الديون المتأخرة.',
+        'افصل معاملاتك حسب الجهة والعملة لتحصل على تقرير أوضح.',
+        'التصدير الدوري للبيانات يحميك من ضياع المعلومات.'
+    ]
+    return tips[secrets.randbelow(len(tips))]
+
+def contact_ids_from_payload(data_or_args):
+    if data_or_args is None:
+        return []
+    if hasattr(data_or_args, 'getlist'):
+        vals = data_or_args.getlist('contact_ids') or data_or_args.getlist('contact_id')
+    else:
+        vals = data_or_args.get('contact_ids') or data_or_args.get('contact_id') or []
+    if isinstance(vals, str):
+        vals = [x.strip() for x in vals.split(',') if x.strip()]
+    if not isinstance(vals, list):
+        vals = [vals]
+    out=[]
+    for v in vals:
+        try:
+            if str(v).strip(): out.append(int(v))
+        except Exception:
+            pass
+    return list(dict.fromkeys(out))
+
+def apply_statement_filters(sql, params, data):
+    if data.get('from'):
+        sql += ' AND t.date>=?'; params.append(data['from'])
+    if data.get('to'):
+        sql += ' AND t.date<=?'; params.append(data['to'])
+    ids = contact_ids_from_payload(data)
+    if ids:
+        placeholders = ','.join(['?'] * len(ids))
+        sql += f' AND t.contact_id IN ({placeholders})'
+        params.extend(ids)
+    if data.get('type'):
+        sql += ' AND t.type=?'; params.append(data['type'])
+    if data.get('status'):
+        sql += ' AND t.status=?'; params.append(data['status'])
+    return sql, params
+
 def get_balance(uid, cid):
     rows = q("""SELECT type, SUM(amount) as total FROM transactions
         WHERE user_id=? AND contact_id=? AND status!='settled' GROUP BY type""",
@@ -483,8 +555,9 @@ def register():
         return jsonify({'error':'اكتب الاسم كامل على الأقل اسمين'})
     if not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email):
         return jsonify({'error':'البريد الإلكتروني غير صحيح'})
-    if not re.match(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$', pwd):
+    if not strong_password(pwd):
         return jsonify({'error':'كلمة المرور لازم 8 أحرف وفيها كبير وصغير ورقم ورمز'})
+    score = password_score(pwd)
     normalized_phone, country, phone_error = normalize_phone(phone, phone_code)
     if phone_error:
         return jsonify({'error': phone_error})
@@ -493,9 +566,9 @@ def register():
     if q("SELECT id FROM users WHERE phone=? OR email=?", (normalized_phone, email), one=True):
         return jsonify({'error':'رقم الجوال أو البريد مسجّل مسبقاً'})
     otp=gen_otp(); expires=(datetime.now()+timedelta(minutes=5)).strftime('%Y-%m-%d %H:%M:%S')
-    q("""INSERT INTO users (name,phone,email,country,default_currency,currencies,password,otp_code,otp_expires)
-         VALUES (?,?,?,?,?,?,?,?,?)""",
-      (name, normalized_phone, email, country, default_currency, currencies, hash_pwd(pwd), otp, expires), commit=True)
+    q("""INSERT INTO users (name,phone,email,country,default_currency,currencies,password,otp_code,otp_expires,security_score)
+         VALUES (?,?,?,?,?,?,?,?,?,?)""",
+      (name, normalized_phone, email, country, default_currency, currencies, hash_pwd(pwd), otp, expires, score), commit=True)
     send_sms(normalized_phone, f'حسابي: رمز التحقق {otp}. صالح 5 دقائق.')
     print(f"📧 [Email Demo] To: {email} | OTP: {otp}")
     return jsonify({'success':True,'otp_demo':otp,'message':'تم إرسال رمز التحقق للجوال والبريد'})
@@ -530,7 +603,9 @@ def login():
     if not user['is_active']: return jsonify({'error':'الحساب موقوف'})
     q("UPDATE users SET last_login=? WHERE id=?",(now_str(),user['id']),commit=True)
     session['user_id']=user['id']; session['user_name']=user['name']
-    return jsonify({'success':True,'user':{'id':user['id'],'name':user['name'],'plan':user['plan']}})
+    tip = financial_tip()
+    add_notif(user['id'], 'نصيحة مالية 💡', tip, '💡')
+    return jsonify({'success':True,'tip':tip,'user':{'id':user['id'],'name':user['name'],'plan':user['plan']}})
 
 @app.route('/api/logout', methods=['GET', 'POST'])
 def logout():
@@ -582,8 +657,8 @@ def change_password():
     if not q("SELECT id FROM users WHERE id=? AND password=?",(uid,hash_pwd(d.get('current_password',''))),one=True):
         return jsonify({'error':'كلمة المرور الحالية غير صحيحة'})
     new_pwd=d.get('new_password','')
-    if len(new_pwd)<6: return jsonify({'error':'كلمة المرور قصيرة جداً'})
-    q("UPDATE users SET password=? WHERE id=?",(hash_pwd(new_pwd),uid),commit=True)
+    if not strong_password(new_pwd): return jsonify({'error':'كلمة المرور لازم 8 أحرف وفيها كبير وصغير ورقم ورمز'})
+    q("UPDATE users SET password=?, security_score=? WHERE id=?",(hash_pwd(new_pwd),password_score(new_pwd),uid),commit=True)
     return jsonify({'success':True})
 
 @app.route('/api/contacts', methods=['GET','POST'])
@@ -657,15 +732,11 @@ def tx_op(tid):
 @app.route('/api/statements', methods=['POST'])
 @login_required
 def statements():
-    uid=session['user_id']; d=request.get_json()
+    uid=session['user_id']; d=request.get_json() or {}
     sql="SELECT t.*,c.name as contact_name,c.type as contact_type FROM transactions t LEFT JOIN contacts c ON c.id=t.contact_id WHERE t.user_id=?"
     p=[uid]
-    if d.get('from'):       sql+=" AND t.date>=?"; p.append(d['from'])
-    if d.get('to'):         sql+=" AND t.date<=?"; p.append(d['to'])
-    if d.get('contact_id'): sql+=" AND t.contact_id=?"; p.append(d['contact_id'])
-    if d.get('type'):       sql+=" AND t.type=?"; p.append(d['type'])
-    if d.get('status'):     sql+=" AND t.status=?"; p.append(d['status'])
-    sql+=" ORDER BY t.date DESC,t.created DESC"
+    sql, p = apply_statement_filters(sql, p, d)
+    sql += " ORDER BY t.date DESC,t.created DESC"
     return jsonify({'data':q(sql,p,many=True)})
 
 @app.route('/api/notifications')
@@ -802,12 +873,11 @@ def export_pdf():
         return jsonify({'error':'التصدير للباقة الاحترافية فقط'}),403
     user=q("SELECT * FROM users WHERE id=?",(uid,),one=True)
     s=get_settings(uid)
-    frm=request.args.get('from',''); to=request.args.get('to',''); cid=request.args.get('contact_id','')
+    filters = request.args
     sql="SELECT t.*,c.name as contact_name FROM transactions t LEFT JOIN contacts c ON c.id=t.contact_id WHERE t.user_id=?"
     p=[uid]
-    if frm: sql+=" AND t.date>=?"; p.append(frm)
-    if to:  sql+=" AND t.date<=?"; p.append(to)
-    if cid: sql+=" AND t.contact_id=?"; p.append(cid)
+    data = {'from':filters.get('from',''), 'to':filters.get('to',''), 'contact_ids':filters.getlist('contact_ids') or filters.get('contact_id','')}
+    sql, p = apply_statement_filters(sql, p, data)
     rows=q(sql+" ORDER BY t.date DESC",p,many=True)
     gold=colors.HexColor('#f6c90e'); dark=colors.HexColor('#1a2340')
     green_=colors.HexColor('#48bb78'); red_=colors.HexColor('#fc8181')
@@ -860,12 +930,11 @@ def export_excel():
     if not check_plan_limit(uid,'export'):
         return jsonify({'error':'التصدير للباقة الاحترافية فقط'}),403
     user=q("SELECT * FROM users WHERE id=?",(uid,),one=True); s=get_settings(uid)
-    frm=request.args.get('from',''); to=request.args.get('to',''); cid=request.args.get('contact_id','')
+    filters = request.args
     sql="SELECT t.*,c.name as contact_name FROM transactions t LEFT JOIN contacts c ON c.id=t.contact_id WHERE t.user_id=?"
     p=[uid]
-    if frm: sql+=" AND t.date>=?"; p.append(frm)
-    if to:  sql+=" AND t.date<=?"; p.append(to)
-    if cid: sql+=" AND t.contact_id=?"; p.append(cid)
+    data = {'from':filters.get('from',''), 'to':filters.get('to',''), 'contact_ids':filters.getlist('contact_ids') or filters.get('contact_id','')}
+    sql, p = apply_statement_filters(sql, p, data)
     rows=q(sql+" ORDER BY t.date DESC",p,many=True); cur=s.get('currency','ر.س')
     wb=Workbook(); ws=wb.active; ws.title="Statement"; ws.sheet_view.rightToLeft=True
     gold_f=PatternFill("solid",fgColor="F6C90E"); dark_f=PatternFill("solid",fgColor="1A2340")
@@ -907,6 +976,65 @@ def export_excel():
     buf=io.BytesIO(); wb.save(buf); buf.seek(0)
     return send_file(buf,mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                      as_attachment=True,download_name=f'hesabi_{date.today()}.xlsx')
+
+
+@app.route('/api/forgot-password', methods=['POST'])
+def forgot_password():
+    d=request.get_json() or {}; login=(d.get('login') or d.get('phone') or d.get('email') or '').strip().lower()
+    if not login: return jsonify({'error':'اكتب رقم الجوال أو البريد'})
+    user = None
+    if '@' in login:
+        user=q("SELECT id,phone,email FROM users WHERE lower(email)=?", (login,), one=True)
+    else:
+        for candidate in phone_candidates_for_login(login):
+            user=q("SELECT id,phone,email FROM users WHERE phone=?", (candidate,), one=True)
+            if user: break
+    if not user: return jsonify({'error':'الحساب غير موجود'})
+    token=gen_otp(); expires=(datetime.now()+timedelta(minutes=10)).strftime('%Y-%m-%d %H:%M:%S')
+    q("UPDATE users SET reset_token=?, reset_expires=? WHERE id=?", (token, expires, user['id']), commit=True)
+    send_sms(user.get('phone',''), f'حسابي: رمز إعادة تعيين كلمة المرور {token}. صالح 10 دقائق.')
+    if user.get('email'): send_email(user['email'], 'إعادة تعيين كلمة المرور', f'رمز إعادة التعيين: {token}')
+    return jsonify({'success':True,'reset_demo':token,'message':'تم إرسال رمز إعادة التعيين'})
+
+@app.route('/api/reset-password', methods=['POST'])
+def reset_password():
+    d=request.get_json() or {}; login=(d.get('login') or '').strip().lower(); token=(d.get('token') or '').strip(); new_pwd=d.get('new_password','')
+    if not all([login,token,new_pwd]): return jsonify({'error':'أكمل البيانات'})
+    if not strong_password(new_pwd): return jsonify({'error':'كلمة المرور لازم 8 أحرف وفيها كبير وصغير ورقم ورمز'})
+    user = None
+    if '@' in login:
+        user=q("SELECT * FROM users WHERE lower(email)=?", (login,), one=True)
+    else:
+        for candidate in phone_candidates_for_login(login):
+            user=q("SELECT * FROM users WHERE phone=?", (candidate,), one=True)
+            if user: break
+    if not user: return jsonify({'error':'الحساب غير موجود'})
+    if user.get('reset_token') != token: return jsonify({'error':'رمز الاستعادة غير صحيح'})
+    try:
+        if datetime.now() > datetime.strptime(user.get('reset_expires',''), '%Y-%m-%d %H:%M:%S'):
+            return jsonify({'error':'انتهت صلاحية الرمز'})
+    except Exception: pass
+    q("UPDATE users SET password=?, reset_token='', reset_expires='', security_score=? WHERE id=?", (hash_pwd(new_pwd), password_score(new_pwd), user['id']), commit=True)
+    return jsonify({'success':True,'message':'تم تغيير كلمة المرور'})
+
+@app.route('/api/backup')
+@login_required
+def backup_json():
+    uid=session['user_id']
+    return jsonify({
+        'created_at': now_str(),
+        'user': q("SELECT id,name,phone,email,business,country,default_currency,currencies,plan FROM users WHERE id=?", (uid,), one=True),
+        'settings': get_settings(uid),
+        'contacts': q("SELECT * FROM contacts WHERE user_id=? ORDER BY name", (uid,), many=True),
+        'transactions': q("SELECT * FROM transactions WHERE user_id=? ORDER BY created DESC", (uid,), many=True),
+        'notifications': q("SELECT * FROM notifications WHERE user_id=? ORDER BY created DESC", (uid,), many=True),
+    })
+
+@app.route('/api/share-statement')
+@login_required
+def share_statement():
+    base = APP_URL.rstrip('/')
+    return jsonify({'success':True,'message':'رابط الكشف جاهز', 'url': base + '/plans'})
 
 @app.route('/plans')
 def plans_page():

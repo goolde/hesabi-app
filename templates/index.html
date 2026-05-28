@@ -1655,5 +1655,221 @@ async function startApp(user) {
   showPage('home');
 }
 </script>
+
+
+<!-- ===== FINAL WAGEEH FULL FEATURES PATCH ===== -->
+<style id="wageehFullFeatureStyle">
+.custom-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+@media(max-width:600px){.custom-grid{grid-template-columns:1fr}}
+#searchDock{position:sticky;top:66px;z-index:90;background:var(--bg,#0a0f1e);padding-top:8px}
+.strength-wrap{height:7px;background:#1a2340;border-radius:999px;overflow:hidden;margin-top:8px}
+.strength-bar{height:100%;width:0;background:#fc8181;transition:.25s}
+.strength-text{font-size:12px;color:#a0aec0;margin-top:6px}
+.hide-feature{display:none!important}
+</style>
+
+<script>
+// ===== missing feature patch =====
+function selectedContactIds(){
+  const sel = $('stContact');
+  if (!sel) return [];
+  return Array.from(sel.selectedOptions || []).map(o=>o.value).filter(Boolean);
+}
+function statementQueryString(){
+  const params = new URLSearchParams({from:$('stFrom')?.value||'', to:$('stTo')?.value||''});
+  selectedContactIds().forEach(id => params.append('contact_ids', id));
+  return params.toString();
+}
+
+// login motivation
+const _wgDoLogin = doLogin;
+doLogin = async function(){
+  const phone = $('loginPhone').value.trim();
+  const pass  = $('loginPass').value;
+  if (!phone || !pass) { showAlert('alertAuth','يرجى تعبئة الحقول','error'); return; }
+  const r = await api('/api/login', {phone, password: pass});
+  if (r.success) { startApp(r.user); if(r.tip) setTimeout(()=>toast('💡 '+r.tip,'success'), 500); }
+  else { showAlert('alertAuth', r.error || 'خطأ في الدخول', 'error'); }
+};
+
+// forgot password modal
+if (!document.getElementById('modalResetPwd')) {
+  document.body.insertAdjacentHTML('beforeend', `
+  <div class="modal-bg" id="modalResetPwd">
+    <div class="modal" style="max-width:400px;">
+      <div class="modal-title"><span>🔐 استعادة كلمة المرور</span><span class="modal-close" onclick="closeModal('modalResetPwd')">✕</span></div>
+      <div id="alertResetPwd" class="alert"></div>
+      <div class="form-group"><label>الجوال أو البريد</label><input id="resetLogin" placeholder="05xxxxxxxx أو email@example.com"></div>
+      <button class="btn btn-blue" style="width:100%;justify-content:center;margin-bottom:12px" onclick="requestResetPwd()">إرسال رمز الاستعادة</button>
+      <div class="form-group"><label>رمز الاستعادة</label><input id="resetToken" placeholder="0000"></div>
+      <div class="form-group"><label>كلمة المرور الجديدة</label><input id="resetNewPwd" type="password" placeholder="Aman@1234" oninput="updateStrength('resetNewPwd','resetStrengthBar','resetStrengthText')"></div>
+      <div class="strength-wrap"><div class="strength-bar" id="resetStrengthBar"></div></div>
+      <div class="strength-text" id="resetStrengthText">اكتب كلمة مرور قوية</div>
+      <button class="btn btn-gold" style="width:100%;justify-content:center;margin-top:12px" onclick="resetPwdNow()">تغيير كلمة المرور</button>
+    </div>
+  </div>`);
+}
+if ($('loginForm') && !$('forgotPwdLink')) $('loginForm').insertAdjacentHTML('beforeend', `<div id="forgotPwdLink" style="text-align:center;margin-top:12px;color:#63b3ed;cursor:pointer;font-size:13px;" onclick="openModal('modalResetPwd')">نسيت كلمة المرور؟</div>`);
+async function requestResetPwd(){
+  const login=$('resetLogin').value.trim(); if(!login){showAlert('alertResetPwd','اكتب الجوال أو البريد','error');return;}
+  const r=await api('/api/forgot-password',{login});
+  if(r.success){ if(r.reset_demo) $('resetToken').value=r.reset_demo; showAlert('alertResetPwd', r.message||'تم إرسال الرمز','success'); }
+  else showAlert('alertResetPwd', r.error||'خطأ','error');
+}
+async function resetPwdNow(){
+  const login=$('resetLogin').value.trim(), token=$('resetToken').value.trim(), new_password=$('resetNewPwd').value;
+  if(passwordScore(new_password)<5){showAlert('alertResetPwd','كلمة المرور لازم قوية','error');return;}
+  const r=await api('/api/reset-password',{login,token,new_password});
+  if(r.success){ closeModal('modalResetPwd'); toast('تم تغيير كلمة المرور ✅'); }
+  else showAlert('alertResetPwd', r.error||'خطأ','error');
+}
+
+function updateStrength(inputId, barId, txtId){
+  const v=$(inputId)?.value||''; const sc=passwordScore(v); const pct=Math.min(100, sc*20);
+  const bar=$(barId); if(bar){bar.style.width=pct+'%'; bar.style.background=pct<50?'#fc8181':pct<80?'#f6ad55':'#48bb78';}
+  const txt=$(txtId); if(txt) txt.textContent=pct<50?'ضعيفة':pct<80?'متوسطة':'قوية';
+}
+
+// contact location/address UI
+function ensureContactLocationFields(){
+  if ($('cLocationText')) return;
+  const notes = $('cNotes')?.closest('.form-group');
+  if(!notes) return;
+  notes.insertAdjacentHTML('afterend', `
+    <div class="form-group"><label>العنوان / موقع العميل</label><input id="cLocationText" placeholder="اكتب العنوان أو وصف الموقع"></div>
+    <div class="grid-2" style="gap:8px;margin-bottom:14px;">
+      <button type="button" class="btn btn-blue" style="justify-content:center" onclick="useCurrentLocationForContact()">📍 تحديد موقعي</button>
+      <button type="button" class="btn btn-outline" style="justify-content:center" onclick="clearContactLocation()">مسح الموقع</button>
+    </div>
+    <input type="hidden" id="cLat"><input type="hidden" id="cLng">
+    <div id="cLocationHint" style="font-size:12px;color:#a0aec0;margin-top:-8px;margin-bottom:12px;"></div>`);
+}
+function useCurrentLocationForContact(){
+  ensureContactLocationFields();
+  if(!navigator.geolocation){ toast('المتصفح لا يدعم تحديد الموقع','error'); return; }
+  navigator.geolocation.getCurrentPosition(pos=>{
+    $('cLat').value = pos.coords.latitude;
+    $('cLng').value = pos.coords.longitude;
+    $('cLocationHint').textContent = `تم تحديد الموقع: ${Number(pos.coords.latitude).toFixed(5)}, ${Number(pos.coords.longitude).toFixed(5)}`;
+    toast('تم تحديد الموقع ✅');
+  },()=>toast('لم يتم السماح بالموقع','error'));
+}
+function clearContactLocation(){ if($('cLat')){$('cLat').value='';$('cLng').value='';$('cLocationHint').textContent='';} }
+const _wgOpenAddContact = openAddContact;
+openAddContact = function(){ _wgOpenAddContact(); ensureContactLocationFields(); $('cLocationText').value=''; clearContactLocation(); };
+const _wgEditCurrentContact = editCurrentContact;
+editCurrentContact = function(){ _wgEditCurrentContact(); ensureContactLocationFields(); const c=allContacts.find(x=>x.id===currentContactId); if(c){$('cLocationText').value=c.location_text||''; $('cLat').value=c.lat||''; $('cLng').value=c.lng||''; $('cLocationHint').textContent=(c.lat&&c.lng)?`موقع محفوظ: ${Number(c.lat).toFixed(5)}, ${Number(c.lng).toFixed(5)}`:'';} };
+saveContact = async function(){
+  ensureContactLocationFields();
+  const name=$('cName').value.trim(), phone=$('cPhone').value.trim(), type=$('cType').value, email=$('cEmail').value.trim(), notes=$('cNotes').value.trim(), editId=$('cEditId').value;
+  const location_text=$('cLocationText')?.value.trim()||'', lat=$('cLat')?.value||null, lng=$('cLng')?.value||null;
+  if(!name){showAlert('alertContact','يرجى إدخال الاسم','error'); return;}
+  const url=editId?`/api/contacts/${editId}`:'/api/contacts';
+  const r=await api(url,{name,phone,type,email,notes,location_text,lat,lng});
+  if(r.success){closeModal('modalContact'); await loadAll(); renderContacts(); renderHome(); toast(editId?'تم التعديل ✅':'تمت الإضافة ✅');}
+  else showAlert('alertContact', r.error||'خطأ','error');
+};
+const _wgOpenContactDetail = openContactDetail;
+openContactDetail = async function(id){
+  await _wgOpenContactDetail(id);
+  const c=allContacts.find(x=>x.id===id);
+  if(c && $('cdContent')){
+    $('cdContent').insertAdjacentHTML('beforeend', `${c.location_text?`<div style="font-size:13px;color:#a0aec0;margin-top:6px;">📍 ${c.location_text}</div>`:''}${c.lat&&c.lng?`<div style="margin-top:8px;"><button class="btn btn-blue btn-sm" onclick="window.open('https://www.google.com/maps/dir/?api=1&destination=${c.lat},${c.lng}','_blank')">فتح الخريطة 🗺️</button></div>`:''}`);
+  }
+};
+
+// make statement contact multi-select and export/send
+const _wgPopulateStContact = populateStContact;
+populateStContact = function(){
+  populateContactSelects();
+  const sel=$('stContact');
+  if(sel){ sel.multiple=true; sel.size=Math.min(6, Math.max(3, allContacts.length||3)); }
+};
+generateStatement = async function(){
+  const r = await api('/api/statements', {from:$('stFrom').value, to:$('stTo').value, contact_ids:selectedContactIds(), type:$('stType').value, status:$('stStatus').value});
+  stData = r.data || [];
+  if(!stData.length){$('stOutput').innerHTML=`<div class="empty"><div class="empty-icon">📑</div><p>لا توجد بيانات</p></div>`; $('stExportBtns').style.display='none'; return;}
+  renderStatement(); $('stExportBtns').style.display='block'; ensureStatementShareButtons(); toast(`تم توليد الكشف — ${stData.length} معاملة`);
+};
+exportPDF = async function(){ window.open('/api/export/pdf?'+statementQueryString(),'_blank'); };
+exportExcel = async function(){ window.open('/api/export/excel?'+statementQueryString(),'_blank'); };
+function ensureStatementShareButtons(){
+  const box=$('stExportBtns'); if(!box || $('shareWhatsBtn')) return;
+  box.insertAdjacentHTML('beforeend', `<div class="grid-2" style="gap:10px;margin-top:10px;"><button id="shareWhatsBtn" class="btn btn-green" onclick="shareStatementWhatsApp()">💬 إرسال واتساب</button><button class="btn btn-blue" onclick="shareStatementSMS()">📱 رسالة نصية</button></div>`);
+}
+async function shareStatementWhatsApp(){ const txt=`كشف حسابي: ${location.origin}/api/export/pdf?${statementQueryString()}`; window.open('https://wa.me/?text='+encodeURIComponent(txt),'_blank'); }
+function shareStatementSMS(){ const txt=`كشف حسابي: ${location.origin}/api/export/pdf?${statementQueryString()}`; window.location.href='sms:?&body='+encodeURIComponent(txt); }
+
+// improve backup from server
+backupData = async function(){
+  const backup = await api('/api/backup');
+  const blob = new Blob([JSON.stringify(backup, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob); const a=document.createElement('a');
+  a.href=url; a.download=`hesabi_backup_${new Date().toISOString().split('T')[0]}.json`; a.click(); URL.revokeObjectURL(url);
+  toast('تم تصدير النسخة الاحتياطية ✅');
+};
+
+// UI customization panel in settings
+function ensureSearchDock(){
+  const container=document.querySelector('.container'); if(!container || $('searchDock')) return;
+  const dock=document.createElement('div'); dock.id='searchDock';
+  if($('globalSearch')) dock.appendChild($('globalSearch').parentElement);
+  if($('searchResults')) dock.appendChild($('searchResults'));
+  container.prepend(dock);
+}
+function ensureCustomizationPanel(){
+  if($('customizationPanel') || !$('page-settings')) return;
+  const panel=document.createElement('div'); panel.className='card'; panel.id='customizationPanel';
+  panel.innerHTML=`
+    <div class="section-title" style="margin-bottom:12px;">🎨 تخصيص الواجهة</div>
+    <div class="custom-grid">
+      <div class="form-group"><label>اسم التطبيق</label><input id="setAppName" placeholder="حسابي"></div>
+      <div class="form-group"><label>الشعار نص/إيموجي</label><input id="setLogo" placeholder="💰"></div>
+      <div class="form-group"><label>اللون الرئيسي</label><input id="setPrimary" type="color" value="#f6c90e"></div>
+      <div class="form-group"><label>الخلفية</label><input id="setBg" type="color" value="#0a0f1e"></div>
+      <div class="form-group"><label>لون البطاقات</label><input id="setCard" type="color" value="#111827"></div>
+      <div class="form-group"><label>الخط</label><select id="setFont"><option value="Cairo">Cairo</option><option value="Tahoma">Tahoma</option><option value="Arial">Arial</option></select></div>
+    </div>
+    <div class="custom-grid">
+      ${['Search:البحث العام','Map:الخريطة','Reports:التقارير','Statements:الكشوف','Export:التصدير','Plans:الباقات','Contacts:جهات الاتصال','Transactions:المعاملات'].map(x=>{const [k,l]=x.split(':'); return `<label class="settings-row" style="border:1px solid rgba(99,179,237,.12);border-radius:10px"><input type="checkbox" id="show${k}" checked> ${l}</label>`}).join('')}
+    </div>
+    <button class="btn btn-gold" style="width:100%;justify-content:center;margin-top:14px;" onclick="saveUiSettings()">💾 حفظ التخصيص</button>`;
+  $('page-settings').prepend(panel);
+}
+async function loadUiSettings(){
+  const r=await api('/api/settings'); const s=r.data?.ui || {};
+  if($('setAppName')) $('setAppName').value=s.appName||'حسابي';
+  if($('setLogo')) $('setLogo').value=s.logo||'💰';
+  if($('setPrimary')) $('setPrimary').value=s.primary||'#f6c90e';
+  if($('setBg')) $('setBg').value=s.bg||'#0a0f1e';
+  if($('setCard')) $('setCard').value=s.card||'#111827';
+  if($('setFont')) $('setFont').value=s.font||'Cairo';
+  ['Search','Map','Reports','Statements','Export','Plans','Contacts','Transactions'].forEach(k=>{ if($('show'+k)) $('show'+k).checked=s['show'+k]!==false; });
+  applyUiSettings(s);
+}
+async function saveUiSettings(){
+  const s={appName:$('setAppName').value||'حسابي', logo:$('setLogo').value||'💰', primary:$('setPrimary').value, bg:$('setBg').value, card:$('setCard').value, font:$('setFont').value};
+  ['Search','Map','Reports','Statements','Export','Plans','Contacts','Transactions'].forEach(k=>s['show'+k]=$('show'+k)?.checked!==false);
+  await api('/api/settings',{ui:s}); applyUiSettings(s); toast('تم حفظ التخصيص ✅');
+}
+function applyUiSettings(s={}){
+  const primary=s.primary||'#f6c90e', bg=s.bg||'#0a0f1e', card=s.card||'#111827', font=s.font||'Cairo', name=s.appName||'حسابي', logo=s.logo||'💰';
+  let st=$('dynamicUiStyle'); if(!st){st=document.createElement('style');st.id='dynamicUiStyle';document.head.appendChild(st);}
+  st.textContent=`body{font-family:${font},sans-serif!important;background:${bg}!important}.card,.stat-card,.qa-btn,.login-box,.modal,.header{background:${card}!important}.logo,.login-logo h1,.gold,.section-title{color:${primary}!important}.logo-icon,.login-logo .icon,.btn-gold,.tab.active,.nav-pill.active,.nav-pill:hover{background:${primary}!important;color:#000!important}`;
+  document.querySelectorAll('.logo').forEach(el=>{ const icon=el.querySelector('.logo-icon'); if(icon) icon.textContent=logo; const nodes=[...el.childNodes].filter(n=>n.nodeType===3); if(nodes[0]) nodes[0].textContent=' '+name; });
+  const li=document.querySelector('.login-logo .icon'); if(li) li.textContent=logo; const lt=document.querySelector('.login-logo h1'); if(lt) lt.textContent=name;
+  const show=(key,val)=>{ const el=$(key); if(el) el.classList.toggle('hide-feature', !val); };
+  show('searchDock', s.showSearch!==false); show('pill-map', s.showMap!==false); show('page-map', s.showMap!==false); show('pill-reports', s.showReports!==false); show('pill-statements', s.showStatements!==false); show('pill-contacts', s.showContacts!==false); show('pill-transactions', s.showTransactions!==false);
+  if($('stExportBtns')) $('stExportBtns').style.display = (s.showExport===false?'none':$('stExportBtns').style.display);
+}
+const _wgRenderSettings = renderSettings;
+renderSettings = async function(){ await _wgRenderSettings(); ensureCustomizationPanel(); await loadUiSettings(); };
+const _wgShowPage = showPage;
+showPage = function(page){ _wgShowPage(page); if(page==='settings'){setTimeout(()=>{ensureCustomizationPanel();loadUiSettings();},50)} if(page==='statements'){setTimeout(()=>{populateStContact(); ensureStatementShareButtons();},50)} };
+
+// boot tweaks
+setTimeout(()=>{ ensureSearchDock(); loadUiSettings().catch(()=>{}); ensureContactLocationFields(); },300);
+</script>
+
 </body>
 </html>
