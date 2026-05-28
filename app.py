@@ -857,11 +857,13 @@ function choosePlan(plan){{
 # ============================================================
 # تشغيل التطبيق
 # ============================================================
+with app.app_context():
+    init_db()
+
 if __name__ == '__main__':
     print("="*55)
     print("  💰 حسابي SaaS")
     print("="*55)
-    init_db()
     port=int(os.environ.get('PORT',5000))
     debug=os.environ.get('DEBUG','true').lower()=='true'
     print(f"🌐 http://localhost:{port}")
