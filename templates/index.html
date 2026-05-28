@@ -147,7 +147,7 @@ tr:hover td{background:rgba(255,255,255,0.02);}
       <div class="login-logo">
         <div class="icon">💰</div>
         <h1>حسابي</h1>
-        <p style="color:#a0aec0;font-size:13px;margin-top:4px;">إدارة مالية ذكية بلغة Python</p>
+        <p style="color:#a0aec0;font-size:13px;margin-top:4px;">إدارة مالية ذكية</p>
       </div>
 
       <div class="tabs">
@@ -172,35 +172,18 @@ tr:hover td{background:rgba(255,255,255,0.02);}
 
       <!-- Register Form -->
       <div id="registerForm" style="display:none">
-        <div class="form-group"><label>الاسم</label>
-          <input id="regName" type="text" placeholder="محمد أحمد">
+        <div class="form-group"><label>الاسم الكامل</label>
+          <input id="regName" type="text" placeholder="مثال: وجيه علي الكردمي">
         </div>
-        <div class="form-group"><label>رقم الجوال</label>
-          <input id="regPhone" type="tel" placeholder="05xxxxxxxx أو رقم دولي">
+        <div class="form-group"><label>رمز البلد + رقم الجوال</label>
+          <div style="display:grid;grid-template-columns:125px 1fr;gap:8px;direction:ltr;">
+            <select id="regPhoneCode" style="direction:ltr;text-align:left;"></select>
+            <input id="regPhone" type="tel" placeholder="5xxxxxxxx" style="direction:ltr;text-align:left;">
+          </div>
+          <div style="font-size:11px;color:#718096;margin-top:6px;">إذا اخترت رمز بلد غير مطابق لرقم الجوال لن يتم قبول التسجيل.</div>
         </div>
         <div class="form-group"><label>البريد الإلكتروني</label>
           <input id="regEmail" type="email" placeholder="example@email.com">
-        </div>
-        <div class="form-group"><label>الدولة</label>
-          <select id="regCountry" onchange="countryChanged()">
-            <option value="SA">السعودية</option>
-            <option value="YE">اليمن</option>
-            <option value="AE">الإمارات</option>
-            <option value="EG">مصر</option>
-            <option value="KW">الكويت</option>
-            <option value="QA">قطر</option>
-            <option value="BH">البحرين</option>
-            <option value="OM">عمان</option>
-            <option value="US">أمريكا</option>
-            <option value="EU">أوروبا</option>
-            <option value="GB">بريطانيا</option>
-          </select>
-        </div>
-        <div class="form-group"><label>العملة الأساسية</label>
-          <select id="regDefaultCurrency"></select>
-        </div>
-        <div class="form-group"><label>عملات إضافية</label>
-          <div id="regCurrencies" class="currency-grid"></div>
         </div>
         <div class="form-group"><label>كلمة المرور</label>
           <input id="regPass" type="password" placeholder="Aa@12345" oninput="updatePasswordStrength()">
@@ -643,6 +626,8 @@ tr:hover td{background:rgba(255,255,255,0.02);}
     <div class="form-group"><label>الاسم الكامل</label><input id="epName" type="text" placeholder="اسمك"></div>
     <div class="form-group"><label>رقم الجوال</label><input id="epPhone" type="tel" placeholder="05xxxxxxxx"></div>
     <div class="form-group"><label>اسم المنشأة (اختياري)</label><input id="epBusiness" type="text" placeholder="اسم شركتك أو متجرك"></div>
+    <div class="form-group"><label>العملة الأساسية</label><select id="epDefaultCurrency"></select></div>
+    <div class="form-group"><label>عملات إضافية للحسابات والمعاملات</label><div id="epCurrencies" class="currency-grid"></div></div>
     <div style="display:flex;gap:10px;margin-top:8px;">
       <button class="btn btn-outline" style="flex:1;justify-content:center" onclick="closeModal('modalEditProfile')">إلغاء</button>
       <button class="btn btn-gold" style="flex:1;justify-content:center" onclick="saveProfile()">💾 حفظ</button>
@@ -675,7 +660,7 @@ tr:hover td{background:rgba(255,255,255,0.02);}
 
 <script>
 // ============================================================
-// JAVASCRIPT — التواصل مع السيرفر Python
+// JAVASCRIPT — التواصل مع السيرفر
 // ============================================================
 
 // المتغيرات العامة
@@ -688,36 +673,37 @@ let txFilter = 'all';
 let stTab = 'total';
 let appSettingsUser = null;
 const COUNTRY_CURRENCY = {
-  SA:{name:'السعودية', currency:'SAR', symbol:'ر.س'}, YE:{name:'اليمن', currency:'YER', symbol:'ر.ي'},
-  AE:{name:'الإمارات', currency:'AED', symbol:'د.إ'}, EG:{name:'مصر', currency:'EGP', symbol:'ج.م'},
-  KW:{name:'الكويت', currency:'KWD', symbol:'د.ك'}, QA:{name:'قطر', currency:'QAR', symbol:'ر.ق'},
-  BH:{name:'البحرين', currency:'BHD', symbol:'د.ب'}, OM:{name:'عمان', currency:'OMR', symbol:'ر.ع'},
-  US:{name:'أمريكا', currency:'USD', symbol:'$'}, EU:{name:'أوروبا', currency:'EUR', symbol:'€'}, GB:{name:'بريطانيا', currency:'GBP', symbol:'£'}
+  SA:{name:'السعودية', phone_code:'+966', currency:'SAR', symbol:'ر.س'}, YE:{name:'اليمن', phone_code:'+967', currency:'YER', symbol:'ر.ي'},
+  AE:{name:'الإمارات', phone_code:'+971', currency:'AED', symbol:'د.إ'}, EG:{name:'مصر', phone_code:'+20', currency:'EGP', symbol:'ج.م'},
+  KW:{name:'الكويت', phone_code:'+965', currency:'KWD', symbol:'د.ك'}, QA:{name:'قطر', phone_code:'+974', currency:'QAR', symbol:'ر.ق'},
+  BH:{name:'البحرين', phone_code:'+973', currency:'BHD', symbol:'د.ب'}, OM:{name:'عمان', phone_code:'+968', currency:'OMR', symbol:'ر.ع'},
+  US:{name:'أمريكا', phone_code:'+1', currency:'USD', symbol:'$'}, GB:{name:'بريطانيا', phone_code:'+44', currency:'GBP', symbol:'£'}
 };
 const ALL_CURRENCIES = ['SAR','YER','AED','EGP','USD','EUR','GBP','KWD','QAR','BHD','OMR'];
 const CURRENCY_LABEL = {SAR:'SAR ر.س',YER:'YER ر.ي',AED:'AED د.إ',EGP:'EGP ج.م',USD:'USD $',EUR:'EUR €',GBP:'GBP £',KWD:'KWD د.ك',QAR:'QAR ر.ق',BHD:'BHD د.ب',OMR:'OMR ر.ع'};
-function countryChanged(){
-  const c = $('regCountry')?.value || 'SA';
-  const cur = COUNTRY_CURRENCY[c]?.currency || 'SAR';
-  if ($('regDefaultCurrency')) $('regDefaultCurrency').value = cur;
-  document.querySelectorAll('#regCurrencies input[type=checkbox]').forEach(x => { if (x.value===cur) x.checked=true; });
-}
 function initCurrencyControls(){
-  const sel=$('regDefaultCurrency');
-  if(sel && !sel.dataset.ready){
-    sel.innerHTML=ALL_CURRENCIES.map(c=>`<option value="${c}">${CURRENCY_LABEL[c]||c}</option>`).join('');
-    sel.dataset.ready='1';
+  const phoneSel=$('regPhoneCode');
+  if(phoneSel && !phoneSel.dataset.ready){
+    phoneSel.innerHTML=Object.entries(COUNTRY_CURRENCY).map(([k,v])=>`<option value="${v.phone_code}">${v.phone_code} ${v.name}</option>`).join('');
+    phoneSel.value='+966';
+    phoneSel.dataset.ready='1';
   }
-  const box=$('regCurrencies');
-  if(box && !box.dataset.ready){
-    box.innerHTML=ALL_CURRENCIES.map(c=>`<label class="currency-option"><input type="checkbox" value="${c}"> ${CURRENCY_LABEL[c]||c}</label>`).join('');
-    box.dataset.ready='1';
-  }
-  countryChanged();
 }
-function selectedRegisterCurrencies(){
-  const checked=[...document.querySelectorAll('#regCurrencies input:checked')].map(x=>x.value);
-  const def=$('regDefaultCurrency')?.value || 'SAR';
+function initSettingsCurrencyControls(){
+  const def=$('epDefaultCurrency');
+  const box=$('epCurrencies');
+  if(def){
+    def.innerHTML=ALL_CURRENCIES.map(c=>`<option value="${c}">${CURRENCY_LABEL[c]||c}</option>`).join('');
+    def.value=currentUser?.default_currency || 'SAR';
+  }
+  if(box){
+    const selected=String(currentUser?.currencies || currentUser?.default_currency || 'SAR').split(',').map(x=>x.trim());
+    box.innerHTML=ALL_CURRENCIES.map(c=>`<label class="currency-option"><input type="checkbox" value="${c}" ${selected.includes(c)?'checked':''}> ${CURRENCY_LABEL[c]||c}</label>`).join('');
+  }
+}
+function selectedSettingsCurrencies(){
+  const def=$('epDefaultCurrency')?.value || currentUser?.default_currency || 'SAR';
+  const checked=[...document.querySelectorAll('#epCurrencies input:checked')].map(x=>x.value);
   return [...new Set([def, ...checked])];
 }
 function passwordScore(p){
@@ -783,21 +769,22 @@ async function doRegister() {
   initCurrencyControls();
   const name  = $('regName').value.trim();
   const phone = $('regPhone').value.trim();
+  const phone_code = $('regPhoneCode').value;
   const email = $('regEmail').value.trim();
   const pass  = $('regPass').value;
-  const country = $('regCountry').value;
-  const default_currency = $('regDefaultCurrency').value;
-  const currencies = selectedRegisterCurrencies();
-  if (!name || !phone || !email || !pass || !country || !default_currency) { showAlert('alertAuth','يرجى تعبئة الاسم والجوال والبريد والدولة والعملة وكلمة المرور','error'); return; }
+  if (!name || !phone || !phone_code || !email || !pass) { showAlert('alertAuth','يرجى تعبئة الاسم الكامل ورمز البلد والجوال والبريد وكلمة المرور','error'); return; }
+  if (name.split(/\s+/).length < 2) { showAlert('alertAuth','اكتب الاسم كامل على الأقل اسمين','error'); return; }
   if (passwordScore(pass) < 5) { showAlert('alertAuth','كلمة المرور لازم قوية: كبير وصغير ورقم ورمز و8 أحرف','error'); return; }
-  const r = await api('/api/register', {name, phone, email, country, default_currency, currencies, password: pass});
-  if (r.success) { showAlert('alertAuth', r.message || 'تم إرسال رمز التحقق', 'success'); if (r.user) startApp(r.user); }
+  const r = await api('/api/register', {name, phone, phone_code, email, password: pass});
+  if (r.success) { showAlert('alertAuth', r.message || 'تم إرسال رمز التحقق', 'success'); }
   else { showAlert('alertAuth', r.error || 'خطأ في التسجيل', 'error'); }
 }
 
 async function doLogout() {
-  await api('/api/logout');
-  location.reload();
+  try { await api('/api/logout'); } catch(e) {}
+  localStorage.clear();
+  sessionStorage.clear();
+  window.location.href = '/';
 }
 
 function showAlert(id, msg, type) {
@@ -1439,15 +1426,14 @@ async function doRegister() {
   initCurrencyControls();
   const name  = $('regName').value.trim();
   const phone = $('regPhone').value.trim();
+  const phone_code = $('regPhoneCode').value;
   const email = $('regEmail').value.trim();
   const pass  = $('regPass').value;
-  const country = $('regCountry').value;
-  const default_currency = $('regDefaultCurrency').value;
-  const currencies = selectedRegisterCurrencies();
-  if (!name || !phone || !email || !pass || !country || !default_currency) { showAlert('alertAuth','يرجى تعبئة الاسم والجوال والبريد والدولة والعملة وكلمة المرور','error'); return; }
+  if (!name || !phone || !phone_code || !email || !pass) { showAlert('alertAuth','يرجى تعبئة الاسم الكامل ورمز البلد والجوال والبريد وكلمة المرور','error'); return; }
+  if (name.split(/\s+/).length < 2) { showAlert('alertAuth','اكتب الاسم كامل على الأقل اسمين','error'); return; }
   if (passwordScore(pass) < 5) { showAlert('alertAuth','كلمة المرور لازم قوية: كبير وصغير ورقم ورمز و8 أحرف','error'); return; }
 
-  const r = await api('/api/register', {name, phone, email, country, default_currency, currencies, password: pass});
+  const r = await api('/api/register', {name, phone, phone_code, email, password: pass});
   if (r.success) {
     showOTP(async () => {
       const otp = [...Array(4)].map((_,i)=>$('otp'+i).value).join('');
@@ -1486,6 +1472,7 @@ function openEditProfile() {
   $('epName').value = currentUser.name || '';
   $('epPhone').value = currentUser.phone || '';
   $('epBusiness').value = currentUser.business || '';
+  initSettingsCurrencyControls();
   $('alertEditProfile').className = 'alert';
   openModal('modalEditProfile');
 }
@@ -1494,8 +1481,10 @@ async function saveProfile() {
   const name = $('epName').value.trim();
   const phone = $('epPhone').value.trim();
   const business = $('epBusiness').value.trim();
+  const default_currency = $('epDefaultCurrency')?.value || currentUser?.default_currency || 'SAR';
+  const currencies = selectedSettingsCurrencies();
   if (!name) { showAlert('alertEditProfile','يرجى إدخال الاسم','error'); return; }
-  const r = await api('/api/profile', {name, phone, business});
+  const r = await api('/api/profile', {name, phone, business, default_currency, currencies});
   if (r.success) {
     closeModal('modalEditProfile');
     await renderSettings();

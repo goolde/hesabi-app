@@ -49,18 +49,19 @@ APP_URL            = os.environ.get('APP_URL', 'http://localhost:5000')
 
 
 COUNTRY_CURRENCY = {
-    'SA': {'name':'السعودية', 'currency':'SAR', 'symbol':'ر.س'},
-    'YE': {'name':'اليمن', 'currency':'YER', 'symbol':'ر.ي'},
-    'AE': {'name':'الإمارات', 'currency':'AED', 'symbol':'د.إ'},
-    'EG': {'name':'مصر', 'currency':'EGP', 'symbol':'ج.م'},
-    'KW': {'name':'الكويت', 'currency':'KWD', 'symbol':'د.ك'},
-    'QA': {'name':'قطر', 'currency':'QAR', 'symbol':'ر.ق'},
-    'BH': {'name':'البحرين', 'currency':'BHD', 'symbol':'د.ب'},
-    'OM': {'name':'عمان', 'currency':'OMR', 'symbol':'ر.ع'},
-    'US': {'name':'أمريكا', 'currency':'USD', 'symbol':'$'},
-    'EU': {'name':'أوروبا', 'currency':'EUR', 'symbol':'€'},
-    'GB': {'name':'بريطانيا', 'currency':'GBP', 'symbol':'£'},
+    'SA': {'name':'السعودية', 'phone_code':'+966', 'currency':'SAR', 'symbol':'ر.س', 'local_regex': r'^(?:0?5\d{8})$'},
+    'YE': {'name':'اليمن', 'phone_code':'+967', 'currency':'YER', 'symbol':'ر.ي', 'local_regex': r'^(?:0?[137]\d{7,8})$'},
+    'AE': {'name':'الإمارات', 'phone_code':'+971', 'currency':'AED', 'symbol':'د.إ', 'local_regex': r'^(?:0?5\d{8})$'},
+    'EG': {'name':'مصر', 'phone_code':'+20',  'currency':'EGP', 'symbol':'ج.م', 'local_regex': r'^(?:0?1\d{9})$'},
+    'KW': {'name':'الكويت', 'phone_code':'+965', 'currency':'KWD', 'symbol':'د.ك', 'local_regex': r'^(?:[569]\d{7})$'},
+    'QA': {'name':'قطر', 'phone_code':'+974', 'currency':'QAR', 'symbol':'ر.ق', 'local_regex': r'^(?:[3567]\d{7})$'},
+    'BH': {'name':'البحرين', 'phone_code':'+973', 'currency':'BHD', 'symbol':'د.ب', 'local_regex': r'^(?:[36]\d{7})$'},
+    'OM': {'name':'عمان', 'phone_code':'+968', 'currency':'OMR', 'symbol':'ر.ع', 'local_regex': r'^(?:[79]\d{7})$'},
+    'US': {'name':'أمريكا', 'phone_code':'+1',   'currency':'USD', 'symbol':'$',   'local_regex': r'^(?:\d{10})$'},
+    'GB': {'name':'بريطانيا', 'phone_code':'+44',  'currency':'GBP', 'symbol':'£',   'local_regex': r'^(?:0?7\d{9})$'},
 }
+
+PHONE_CODE_TO_COUNTRY = {v['phone_code']: k for k, v in COUNTRY_CURRENCY.items()}
 
 def currency_symbol(code):
     code = (code or 'SAR').upper()
@@ -68,6 +69,43 @@ def currency_symbol(code):
         if v['currency'] == code:
             return v['symbol']
     return code
+
+def normalize_phone(phone, phone_code='+966'):
+    """توحيد رقم الجوال مع رمز البلد والتحقق من صحة الرقم المحلي."""
+    raw = (phone or '').strip().replace(' ', '').replace('-', '')
+    code = (phone_code or '+966').strip().replace(' ', '')
+    if not code.startswith('+'):
+        code = '+' + code.lstrip('0')
+    if code not in PHONE_CODE_TO_COUNTRY:
+        return None, None, 'رمز البلد غير مدعوم'
+    country = PHONE_CODE_TO_COUNTRY[code]
+    info = COUNTRY_CURRENCY[country]
+    if raw.startswith('+'):
+        if not raw.startswith(code):
+            return None, country, 'رمز البلد لا يطابق رقم الجوال'
+        local = raw[len(code):]
+    elif raw.startswith('00'):
+        full = '+' + raw[2:]
+        if not full.startswith(code):
+            return None, country, 'رمز البلد لا يطابق رقم الجوال'
+        local = full[len(code):]
+    else:
+        local = raw
+    if not re.match(info['local_regex'], local):
+        return None, country, f'رقم الجوال غير صحيح لدولة {info["name"]}'
+    local = local[1:] if local.startswith('0') else local
+    return code + local, country, None
+
+def phone_candidates_for_login(phone):
+    raw = (phone or '').strip().replace(' ', '').replace('-', '')
+    candidates = [raw]
+    for code in PHONE_CODE_TO_COUNTRY:
+        n, _, _ = normalize_phone(raw, code)
+        if n:
+            candidates.append(n)
+    if re.match(r'^05\d{8}$', raw):
+        candidates.append('+966' + raw[1:])
+    return list(dict.fromkeys([x for x in candidates if x]))
 
 
 # ============================================================
@@ -434,37 +472,41 @@ def index(): return load_html()
 @app.route('/api/register', methods=['POST'])
 def register():
     d = request.get_json() or {}
-    name=d.get('name','').strip(); phone=d.get('phone','').strip(); pwd=d.get('password','')
-    email=d.get('email','').strip().lower(); country=d.get('country','SA').strip().upper() or 'SA'
-    default_currency=d.get('default_currency','').strip().upper()
-    currencies=d.get('currencies',[])
-    if not default_currency:
-        default_currency = COUNTRY_CURRENCY.get(country, COUNTRY_CURRENCY['SA'])['currency']
-    if isinstance(currencies, str):
-        currencies = [x.strip().upper() for x in currencies.split(',') if x.strip()]
-    currencies = list(dict.fromkeys([default_currency] + [c.upper() for c in currencies if c]))
-    if not all([name,phone,email,pwd,country,default_currency]):
-        return jsonify({'error':'يرجى تعبئة الاسم والجوال والبريد والدولة والعملة وكلمة المرور'})
+    name = d.get('name','').strip()
+    phone = d.get('phone','').strip()
+    phone_code = d.get('phone_code', d.get('country_code', '+966')).strip()
+    pwd = d.get('password','')
+    email = d.get('email','').strip().lower()
+    if not all([name, phone, phone_code, email, pwd]):
+        return jsonify({'error':'يرجى تعبئة الاسم الكامل ورمز البلد ورقم الجوال والبريد وكلمة المرور'})
+    if len(name.split()) < 2:
+        return jsonify({'error':'اكتب الاسم كامل على الأقل اسمين'})
     if not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email):
         return jsonify({'error':'البريد الإلكتروني غير صحيح'})
     if not re.match(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$', pwd):
         return jsonify({'error':'كلمة المرور لازم 8 أحرف وفيها كبير وصغير ورقم ورمز'})
-    if not (re.match(r'^05\d{8}$',phone) or re.match(r'^\+?\d{8,15}$',phone)):
-        return jsonify({'error':'رقم الجوال غير صحيح'})
-    if q("SELECT id FROM users WHERE phone=? OR email=?",(phone,email),one=True):
+    normalized_phone, country, phone_error = normalize_phone(phone, phone_code)
+    if phone_error:
+        return jsonify({'error': phone_error})
+    default_currency = COUNTRY_CURRENCY[country]['currency']
+    currencies = default_currency
+    if q("SELECT id FROM users WHERE phone=? OR email=?", (normalized_phone, email), one=True):
         return jsonify({'error':'رقم الجوال أو البريد مسجّل مسبقاً'})
     otp=gen_otp(); expires=(datetime.now()+timedelta(minutes=5)).strftime('%Y-%m-%d %H:%M:%S')
     q("""INSERT INTO users (name,phone,email,country,default_currency,currencies,password,otp_code,otp_expires)
          VALUES (?,?,?,?,?,?,?,?,?)""",
-      (name,phone,email,country,default_currency,','.join(currencies),hash_pwd(pwd),otp,expires),commit=True)
-    send_sms(phone,f'حسابي: رمز التحقق {otp}. صالح 5 دقائق.')
+      (name, normalized_phone, email, country, default_currency, currencies, hash_pwd(pwd), otp, expires), commit=True)
+    send_sms(normalized_phone, f'حسابي: رمز التحقق {otp}. صالح 5 دقائق.')
     print(f"📧 [Email Demo] To: {email} | OTP: {otp}")
     return jsonify({'success':True,'otp_demo':otp,'message':'تم إرسال رمز التحقق للجوال والبريد'})
 
 @app.route('/api/verify-otp', methods=['POST'])
 def verify_otp():
     d=request.get_json(); phone=d.get('phone','').strip(); otp=d.get('otp','').strip()
-    user=q("SELECT * FROM users WHERE phone=?",(phone,),one=True)
+    user = None
+    for candidate in phone_candidates_for_login(phone):
+        user=q("SELECT * FROM users WHERE phone=?",(candidate,),one=True)
+        if user: break
     if not user: return jsonify({'error':'المستخدم غير موجود'})
     if user['otp_code']!=otp: return jsonify({'error':'رمز التحقق غير صحيح'})
     try:
@@ -479,7 +521,11 @@ def verify_otp():
 @app.route('/api/login', methods=['POST'])
 def login():
     d=request.get_json(); phone=d.get('phone','').strip(); pwd=d.get('password','')
-    user=q("SELECT * FROM users WHERE phone=? AND password=?",(phone,hash_pwd(pwd)),one=True)
+    user = None
+    hp = hash_pwd(pwd)
+    for candidate in phone_candidates_for_login(phone):
+        user=q("SELECT * FROM users WHERE phone=? AND password=?",(candidate,hp),one=True)
+        if user: break
     if not user: return jsonify({'error':'الجوال أو كلمة المرور غير صحيحة'})
     if not user['is_active']: return jsonify({'error':'الحساب موقوف'})
     q("UPDATE users SET last_login=? WHERE id=?",(now_str(),user['id']),commit=True)
@@ -500,7 +546,10 @@ def me():
 @app.route('/api/resend-otp', methods=['POST'])
 def resend_otp():
     d=request.get_json(); phone=d.get('phone','').strip()
-    user=q("SELECT id FROM users WHERE phone=?",(phone,),one=True)
+    user = None
+    for candidate in phone_candidates_for_login(phone):
+        user=q("SELECT id FROM users WHERE phone=?",(candidate,),one=True)
+        if user: break
     if not user: return jsonify({'error':'المستخدم غير موجود'})
     otp=gen_otp(); expires=(datetime.now()+timedelta(minutes=5)).strftime('%Y-%m-%d %H:%M:%S')
     q("UPDATE users SET otp_code=?,otp_expires=? WHERE id=?",(otp,expires,user['id']),commit=True)
@@ -513,10 +562,14 @@ def profile():
     d=request.get_json(); uid=session['user_id']
     name=d.get('name','').strip()
     if not name: return jsonify({'error':'الاسم مطلوب'})
-    country=d.get('country','SA').strip().upper() or 'SA'
-    default_currency=d.get('default_currency','SAR').strip().upper() or 'SAR'
-    currencies=d.get('currencies', default_currency)
+    current = q("SELECT country, default_currency, currencies FROM users WHERE id=?", (uid,), one=True) or {}
+    country=d.get('country', current.get('country') or 'SA').strip().upper() or 'SA'
+    default_currency=d.get('default_currency', current.get('default_currency') or COUNTRY_CURRENCY.get(country, COUNTRY_CURRENCY['SA'])['currency']).strip().upper() or 'SAR'
+    currencies=d.get('currencies', current.get('currencies') or default_currency)
     if isinstance(currencies, list): currencies=','.join(currencies)
+    cur_list = [x.strip().upper() for x in str(currencies).split(',') if x.strip()]
+    if default_currency not in cur_list: cur_list.insert(0, default_currency)
+    currencies = ','.join(dict.fromkeys(cur_list))
     q("UPDATE users SET name=?,email=?,business=?,country=?,default_currency=?,currencies=? WHERE id=?",
       (name,d.get('email',''),d.get('business',''),country,default_currency,currencies,uid),commit=True)
     session['user_name']=name
