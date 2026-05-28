@@ -666,7 +666,8 @@ const toast = (msg, type='success') => {
 const api = async (url, data=null) => {
   const opts = {
     method: data ? 'POST' : 'GET',
-    headers: {'Content-Type':'application/json'}
+    headers: {'Content-Type':'application/json'},
+    credentials: 'same-origin'
   };
   if (data) opts.body = JSON.stringify(data);
   const res = await fetch(url, opts);
@@ -701,8 +702,22 @@ async function doRegister() {
 }
 
 async function doLogout() {
-  await api('/api/logout');
-  location.reload();
+  try {
+    await fetch('/api/logout', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      credentials: 'same-origin'
+    });
+  } catch (e) {}
+
+  localStorage.clear();
+  sessionStorage.clear();
+
+  $('mainApp').style.display = 'none';
+  $('loginPage').style.display = 'block';
+  $('loginPhone').value = '';
+  $('loginPass').value = '';
+  history.replaceState(null, '', '/');
 }
 
 function showAlert(id, msg, type) {
@@ -1298,17 +1313,18 @@ function generateOTP() {
   return Math.floor(1000 + Math.random() * 9000).toString();
 }
 
-function showOTP(action, desc) {
-  pendingOTPCode = generateOTP();
+function showOTP(action, desc, code=null) {
+  pendingOTPCode = code;
   pendingOTPAction = action;
-  $('otpDesc').textContent = desc || `رمز التحقق: ${pendingOTPCode} (تجريبي)`;
+  $('otpDesc').textContent = desc || (code ? `رمز التحقق: ${code} (تجريبي)` : 'تم إرسال رمز التحقق');
   ['otp0','otp1','otp2','otp3'].forEach(id => { const el=$(id); if(el) el.value=''; });
   $('alertOTP').className='alert';
   openModal('modalOTP');
   setTimeout(() => { const el=$('otp0'); if(el) el.focus(); }, 200);
-  // In real app: send SMS via Unifonic/Taqnyat
-  console.log(`OTP Code: ${pendingOTPCode}`);
-  toast(`رمز التحقق: ${pendingOTPCode}`, 'success');
+  if (code) {
+    console.log(`OTP Code: ${code}`);
+    toast(`رمز التحقق: ${code}`, 'success');
+  }
 }
 
 function otpNext(i) {
@@ -1324,13 +1340,13 @@ function verifyOTP() {
     const el = $(id); return el ? el.value : '';
   }).join('');
 
-  if (entered === pendingOTPCode) {
-    closeModal('modalOTP');
-    toast('تم التحقق بنجاح ✅', 'success');
-    if (pendingOTPAction) pendingOTPAction();
-  } else {
+  if (pendingOTPCode && entered !== pendingOTPCode) {
     showAlert('alertOTP', 'رمز التحقق غير صحيح', 'error');
+    return;
   }
+
+  closeModal('modalOTP');
+  if (pendingOTPAction) pendingOTPAction(entered);
 }
 
 // Hook into register to show OTP
@@ -1342,11 +1358,23 @@ async function doRegister() {
   if (!name || !phone || !pass) { showAlert('alertAuth','يرجى تعبئة الحقول','error'); return; }
   if (pass.length < 6) { showAlert('alertAuth','كلمة المرور قصيرة (6 أحرف على الأقل)','error'); return; }
 
-  showOTP(async () => {
-    const r = await api('/api/register', {name, phone, password: pass});
-    if (r.success) { startApp(r.user); }
-    else { showAlert('alertAuth', r.error || 'خطأ في التسجيل', 'error'); }
-  }, `رمز تأكيد تسجيل الحساب (تجريبي)`);
+  const r = await api('/api/register', {name, phone, password: pass});
+  if (!r.success) {
+    showAlert('alertAuth', r.error || 'خطأ في التسجيل', 'error');
+    return;
+  }
+
+  showOTP(async (otp) => {
+    const v = await api('/api/verify-otp', {phone, otp});
+    if (v.success) {
+      toast('تم إنشاء الحساب ✅', 'success');
+      startApp(v.user);
+    } else {
+      showAlert('alertAuth', v.error || 'رمز التحقق غير صحيح', 'error');
+      $('loginPage').style.display = 'block';
+      $('mainApp').style.display = 'none';
+    }
+  }, r.otp_demo ? `رمز التحقق التجريبي: ${r.otp_demo}` : 'أدخل رمز التحقق المرسل للجوال', r.otp_demo || null);
 }
 
 // ===== SETTINGS =====
